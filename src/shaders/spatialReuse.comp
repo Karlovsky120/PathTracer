@@ -1,0 +1,93 @@
+#version 460 core
+#extension GL_GOOGLE_include_directive : require
+
+#include "include/reservoir.glsl"
+#include "include/brdf.glsl"
+
+layout (local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout (binding = 0) uniform Uniforms
+{
+	RestirUniforms uniforms;
+};
+
+layout (binding = 1) uniform sampler2D uniformWorldPosition;
+layout (binding = 2) uniform sampler2D uniformAlbedo;
+layout (binding = 3) uniform sampler2D uniformNormal;
+layout (binding = 4) uniform sampler2D uniformMaterialProperties;
+layout (binding = 5) uniform sampler2D uniformDepth;
+
+layout (binding = 6) buffer Reservoirs
+{
+	Reservoir reservoirs[];
+};
+
+layout (binding = 7) buffer ResultReservoirs
+{
+	Reservoir resultReservoirs[];
+};
+
+layout(push_constant) uniform pushConstants
+{
+	int randomNumber;
+} pc;
+
+void main()
+{
+	uvec2 pixelCoord = gl_GlobalInvocationID.xy;
+	if (any(greaterThanEqual(pixelCoord, uniforms.screenSize)))
+	{
+		return;
+	}
+
+	vec3 albedo = texelFetch(uniformAlbedo, ivec2(pixelCoord), 0).xyz;
+	vec3 normal = texelFetch(uniformNormal, ivec2(pixelCoord), 0).xyz;
+	vec2 roughnessMetallic = texelFetch(uniformMaterialProperties, ivec2(pixelCoord), 0).xy;
+	vec3 worldPos = texelFetch(uniformWorldPosition, ivec2(pixelCoord), 0).xyz;
+	float worldDepth = texelFetch(uniformDepth, ivec2(pixelCoord), 0).x;
+
+	float albedoLum = 0.2126f * albedo.r + 0.7152f * albedo.g + 0.0722f * albedo.b;
+
+	uint reservoirIndex = pixelCoord.y * uniforms.screenSize.x + pixelCoord.x;
+	Reservoir res = reservoirs[reservoirIndex];
+
+	Random random = seedRand(uniforms.frame * 31 + pc.randomNumber, pixelCoord.y * 10007 + pixelCoord.x);
+	for(int i = 0; i < uniforms.spatialNeighbors; i++)
+	{
+		ivec2 randNeighbor = ivec2(0, 0);
+
+		float angle = randFloat(random) * 2.0 * M_PI;
+		float radius = sqrt(randFloat(random)) * uniforms.spatialRadius;
+
+		ivec2 randNeighborOffset = ivec2(floor(cos(angle) * radius), floor(sin(angle) * radius));
+		randNeighbor.x = clamp(int(pixelCoord.x) + randNeighborOffset.x, 0, int(uniforms.screenSize.x) - 1);
+		randNeighbor.y = clamp(int(pixelCoord.y) + randNeighborOffset.y, 0, int(uniforms.screenSize.y) - 1);
+
+		uint randIndex = randNeighbor.y * uniforms.screenSize.x + randNeighbor.x;
+
+		float neighborDepth = texelFetch(uniformDepth, ivec2(randNeighbor), 0).x;
+		vec3 neighborNor = texelFetch(uniformNormal, ivec2(randNeighbor), 0).xyz;
+
+		if (abs(neighborDepth - worldDepth) > uniforms.spatialPosThreshold * abs(worldDepth) ||
+			dot(neighborNor, normal) < cos(radians(uniforms.spatialNormalThreshold)))
+		{
+			continue;
+		}
+
+		Reservoir randRes = reservoirs[randIndex];
+		float newPHats[RESERVOIR_SIZE];
+
+		for(int j = 0; j < RESERVOIR_SIZE; j++)
+		{
+			float newPHat = evaluatePHat(
+				worldPos, randRes.samples[j].position_emissionLum.xyz, uniforms.cameraPos.xyz,
+				normal, randRes.samples[j].normal.xyz, randRes.samples[j].normal.w > 0.5f,
+				albedoLum, randRes.samples[j].position_emissionLum.w, roughnessMetallic.x, roughnessMetallic.y);
+			newPHats[j] = newPHat;
+		}
+
+		combineReservoirs(res, randRes, newPHats, random);
+	}
+
+	resultReservoirs[reservoirIndex] = res;
+}

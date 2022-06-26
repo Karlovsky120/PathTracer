@@ -1,0 +1,12 @@
+[submodule "external/glfw"]
+	path = external/glfw
+	url = git@github.com:glfw/glfw.git
+[submodule "external/VulkanMemoryAllocator"]
+	path = external/VulkanMemoryAllocator
+	url = git@github.com:GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "external/tinygltf"]
+	path = external/tinygltf
+	url = git@github.com:syoyo/tinygltf.git
+[submodule "external/MikkTSpace"]
+	path = external/MikkTSpace
+	url = git@github.com:mmikk/MikkTSpace.git
